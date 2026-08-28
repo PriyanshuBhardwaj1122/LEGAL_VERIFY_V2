@@ -312,12 +312,12 @@ async def test_outline_node_assigns_uncovered_issue_to_last_section():
     llm_out = LLMOutline(
         title="Understanding Section 29A",
         sections=[
-            LLMSection(title="Background", target_words=500, issue_refs=["Issue A"]),
-            LLMSection(title="Analysis", target_words=1000, issue_refs=[]),  # forgot Issue B
+            LLMSection(title="Background", target_words=500, issue_refs=["Issue A"], role="convict", conclusion="Background conclusion."),
+            LLMSection(title="Analysis", target_words=1000, issue_refs=[], role="convict", conclusion="Analysis conclusion."),  # forgot Issue B
         ],
     )
 
-    with patch("app.graph.nodes.generation.get_llm") as mock_get_llm:
+    with patch("app.graph.nodes.generation.get_generation_llm") as mock_get_llm:
         mock_llm = AsyncMock()
         mock_llm.generate = AsyncMock(return_value=(llm_out, {"input_tokens": 1, "output_tokens": 1}))
         mock_get_llm.return_value = mock_llm
@@ -344,7 +344,7 @@ async def test_draft_node_scopes_evidence_per_section():
     async def fake_generate(**kwargs):
         return LLMSectionDraft(body="drafted text"), {"input_tokens": 1, "output_tokens": 1}
 
-    with patch("app.graph.nodes.generation.get_llm") as mock_get_llm:
+    with patch("app.graph.nodes.generation.get_generation_llm") as mock_get_llm:
         mock_llm = AsyncMock()
         mock_llm.generate = AsyncMock(side_effect=fake_generate)
         mock_get_llm.return_value = mock_llm

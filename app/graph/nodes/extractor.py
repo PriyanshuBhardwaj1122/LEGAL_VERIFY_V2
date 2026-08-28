@@ -34,7 +34,8 @@ Rules, in order of importance:
 5. pinpoint: give the paragraph number for judgments ("para 42") or the provision ("s. 29A(3)(c)") for legislation, only if it appears in the text.
 6. Do not carry over knowledge from outside this document. If you recognise the case and remember something not written here, that memory is not evidence.
 7. At most 8 items. Choose the propositions an article would actually cite.
-8. supports_issues: the legal issues below are numbered. For each item, list the number(s) (as strings, e.g. ["1"] or ["1","3"]) of every issue it helps resolve. Leave it empty only if the item genuinely doesn't bear on any listed issue — most items should map to at least one."""
+8. supports_issues: the legal issues below are numbered. For each item, list the number(s) (as strings, e.g. ["1"] or ["1","3"]) of every issue it helps resolve. Leave it empty only if the item genuinely doesn't bear on any listed issue — most items should map to at least one.
+9. citation_raw: copy the source's own formal citation string verbatim when the document states one — a neutral citation ("2023 INSC 456"), reporter citation ("(2023) 5 SCC 1", "AIR 2019 SC 123"), SCC OnLine citation ("2021 SCC OnLine Del 456"), case/writ number ("Civil Appeal No. 1234 of 2020"), statute section ("Section 29A of the Insolvency and Bankruptcy Code, 2016"), or circular number ("SEBI/HO/CFD/CMD/CIR/P/2020/12") — whichever the document actually contains for this item. For a holding or obiter item this is the case's own citation, not the source's URL or page title. Leave it null only when the document genuinely states no formal citation for this proposition (a press article's own byline is not a citation). Never invent one and never supply one from memory rather than the document text."""
 
 _USER_TEMPLATE = """Source: {title} | {source_type} | {issuing_body} | {date}
 

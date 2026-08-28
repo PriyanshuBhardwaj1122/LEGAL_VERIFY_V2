@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PYTHONPATH=. .venv/bin/python test_generation_synthetic.py)",
+      "Bash(PYTHONPATH=. .venv/bin/python tests/test_generation_synthetic.py)",
+      "Bash(PYTHONPATH=. .venv/bin/python -m pytest tests/ -q)",
+      "Bash(myenv/bin/python -c \"import pytest; print\\(pytest.__version__\\)\")",
+      "Bash(PYTHONPATH=. myenv/bin/python -m pytest tests/ -q)",
+      "Bash(PYTHONPATH=. myenv/bin/python -m pytest tests/test_openai_strict_schema.py -v)",
+      "Bash(PYTHONPATH=. .venv/bin/python test_generation_full.py)",
+      "Bash(PYTHONPATH=. .venv/bin/python test_m3_full.py)",
+      "Bash(tee /private/tmp/claude-501/-Users-aryanagrawal-Downloads-LEGAL-VERIFY-V2/be5a20f2-3c7e-485a-87e7-e73439ccceaf/scratchpad/m3_run.log)",
+      "Bash(PYTHONPATH=. .venv/bin/python -c ' *)",
+      "Bash(PYTHONPATH=. .venv/bin/python test_gap_check_full.py)",
+      "Bash(PYTHONPATH=. .venv/bin/python test_repair_loop_full.py)",
+      "Bash(tee /private/tmp/claude-501/-Users-aryanagrawal-Downloads-LEGAL-VERIFY-V2/be5a20f2-3c7e-485a-87e7-e73439ccceaf/scratchpad/repair_loop.log)",
+      "Bash(python3 -c ' *)",
+      "Bash(PYTHONPATH=. .venv/bin/python -c \"from app.core.config import get_settings; s = get_settings\\(\\); print\\('openai_model:', s.openai_model\\); print\\('claude_model:', s.claude_model\\); print\\('llm_provider:', s.llm_provider\\); print\\('generation_llm_provider:', repr\\(s.generation_llm_provider\\)\\)\")",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(docker compose *)"
+    ]
+  }
+}
