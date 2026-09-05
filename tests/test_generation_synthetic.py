@@ -57,6 +57,18 @@ def _evidence(
     kind: str = "holding",
     citation: LegalCitation | None = None,
 ) -> Evidence:
+    # Real evidence normally carries a citation; defaulting to None made
+    # every fixture look like an unattributable item, which the
+    # unresolved-citation check in verify_draft correctly rejects.
+    if citation is None:
+        citation = LegalCitation(
+            raw="AIR 2019 SC 123",
+            kind="case",
+            case_name="Swiss Ribbons v Union of India",
+            reporter_citation="AIR 2019 SC 123",
+            court="Supreme Court of India",
+            is_parsed=True,
+        )
     return Evidence(
         evidence_id=evidence_id,
         run_id="run-1",

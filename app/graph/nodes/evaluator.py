@@ -18,6 +18,8 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.core.logging import ctx_node, get_logger
+from app.core.rate_limit import get_host_limiter
+from app.providers.extract.fetcher import USER_AGENT
 from app.domain.authority import authority_weight, resolve_authority
 from app.providers.llm.base import get_llm
 from app.schemas.common import CourtLevel, Jurisdiction, SourceType
@@ -50,9 +52,16 @@ FETCH_TIMEOUT_SEC = 8.0
 async def _check_retrievability(url: str, client: httpx.AsyncClient) -> float:
     """HEAD request to check the URL actually resolves. Returns a 0-1
     signal — 1.0 for a clean 200, partial credit for redirects/blocks
-    (many government sites reject HEAD but are fine on GET), 0 for dead."""
+    (many government sites reject HEAD but are fine on GET), 0 for dead.
+
+    Paced per host: this probe runs over EVERY candidate (hundreds per
+    run, many on one host), so unthrottled it would trip a site's rate
+    limiter before the fetch phase ever starts — and then the fetches
+    that actually matter get the 429s.
+    """
     try:
-        resp = await client.head(url, timeout=FETCH_TIMEOUT_SEC, follow_redirects=True)
+        async with get_host_limiter().slot(url):
+            resp = await client.head(url, timeout=FETCH_TIMEOUT_SEC, follow_redirects=True)
         if resp.status_code == 200:
             return 1.0
         if resp.status_code in (403, 405):
@@ -105,7 +114,9 @@ async def score_candidates_deterministic(
     computed only after Stage B."""
     candidates: list[Source] = []
 
-    async with httpx.AsyncClient() as client:
+    # Same UA as the fetcher: a bare httpx client identifies itself with
+    # httpx's default agent, which some sites throttle on sight.
+    async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}) as client:
         retrievability_scores = await asyncio.gather(
             *[_check_retrievability(str(r.url), client) for r in raw_results],
             return_exceptions=False,
@@ -194,7 +205,7 @@ Candidates (id | type | tier | date | title | snippet):
 
 For each candidate return relevance 0.0-1.0, the issue ids it addresses, and a one-line reason under 15 words. Score on the snippet alone. If a snippet is uninformative, score 0.3 and say so — do not guess from the title.
 
-Watch specifically for false-positive keyword matches: the same section number or defined term can belong to a completely different statute (e.g. "Section 29A" appears in both the Arbitration and Conciliation Act, 1996 AND the Insolvency and Bankruptcy Code, 2016 — they have nothing to do with each other). If the title or snippet indicates the source concerns a different instrument than the one in the topic/legal issues, score relevance near 0.0 and say so, even if the section number or a keyword matches exactly."""
+Watch specifically for false-positive keyword matches: the same section number or defined term can belong to a completely different statute (e.g. "Section 34" is the provision for setting aside an arbitral award under the Arbitration and Conciliation Act, 1996, AND the common-intention provision of the Indian Penal Code — they have nothing to do with each other). If the title or snippet indicates the source concerns a different instrument than the one in the topic/legal issues, score relevance near 0.0 and say so, even if the section number or a keyword matches exactly."""
 
 
 RELEVANCE_BATCH_SIZE = 25

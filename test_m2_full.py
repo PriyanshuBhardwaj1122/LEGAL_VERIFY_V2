@@ -34,8 +34,8 @@ async def main():
     print(f"=== Run ID: {run_id} ===\n")
 
     request = ResearchRequest(
-        topic="Eligibility criteria under Section 29A of the Insolvency and Bankruptcy Code, 2016",
-        practice_area="insolvency",
+        topic="2 days back Usa Limit time for kids to access social media Meta is going to regulate Find the legality Concern of data privacy…",
+        practice_area="Technology & Data Privacy Law",
         article_config=ArticleConfig(article_type="explainer", target_words=2000),
         budget_inr=Decimal("50.00"),
     )

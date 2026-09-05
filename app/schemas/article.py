@@ -113,5 +113,10 @@ class DraftVerificationReport(BaseModel):
     uncovered_issues: list[str] = []  # legal_issues with zero cited evidence anywhere in the draft
     citation_count: int
     unique_evidence_cited: int
+    # Markers that resolve to real, in-scope evidence but whose evidence
+    # carries no renderable citation — they print as "[citation
+    # unresolved]" to the reader. Valid plumbing, useless attribution.
+    unresolved_citation_count: int = 0
+    unresolved_citation_ratio: float = 0.0
     verdict: Literal["passed", "failed"]
     rationale: str

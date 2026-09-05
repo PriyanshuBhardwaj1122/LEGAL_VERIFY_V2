@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     indiankanoon_api_token: str = ""
     serpapi_api_key: str = ""
 
+    # Outbound HTTP politeness, applied per host by app/core/rate_limit.py
+    # to fetches AND to the evaluator's retrievability probes. Hitting one
+    # site many-wide with no spacing is what produced the 429s that were
+    # dropping court judgments from runs.
+    per_host_fetch_concurrency: int = 2
+    per_host_fetch_rate_per_sec: float = 2.0
+
     # Provider concurrency
     tavily_concurrency: int = 8
     exa_concurrency: int = 8

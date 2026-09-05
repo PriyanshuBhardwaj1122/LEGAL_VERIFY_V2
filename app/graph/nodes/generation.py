@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from rapidfuzz import fuzz
 
 from app.core.logging import ctx_node, get_logger
-from app.domain.citation_render import render_citation
+from app.domain.citation_render import render_citation, render_evidence_citation
 from app.providers.llm.base import get_generation_llm
 from app.schemas.article import (
     ArticleDraft,
@@ -105,6 +105,13 @@ def _calc_matches(computed: float, claimed: float) -> bool:
     return abs(computed - claimed) <= tolerance
 QUOTE_MATCH_THRESHOLD = 92  # mirrors grounding.py's FUZZY_THRESHOLD
 
+# Above this share of citations rendering as "[citation unresolved]",
+# the draft fails verification. Deliberately not zero: a stray blog with
+# no formal citation is normal and shouldn't fail a run. A quarter of the
+# article being unattributable is not. (Baseline before the citation work
+# was 0.57, which should fail loudly.)
+UNRESOLVED_CITATION_FAIL_RATIO = 0.25
+
 # The fixed calibrated-hedging phrases _DRAFT_SYSTEM instructs every
 # section to use. Tracked across sections (see _draft_section's
 # hedge_counts_so_far) so a later section can be told a phrase is
@@ -155,9 +162,21 @@ class LLMThesis(BaseModel):
     falsifier: str = Field(min_length=1, max_length=1500)
 
 
-_THESIS_SYSTEM = """You state the one specific, falsifiable claim this article will argue — not its topic, not a balanced summary of the area.
+_THESIS_SYSTEM = """You state the view this article exists to advance — the thing its author believes and wants the reader to end up believing too. Not its topic, and not a balanced summary of the area.
 
-A thesis is falsifiable: a specific reader could point to a specific fact and say "no, because X." "Section 29A is necessary but may require refinement" is not a thesis — it is compatible with every possible finding, so nothing could ever falsify it. "The classification in Section 29A(c) is arbitrary because it turns on a fact — a related party's own default — that the applicant cannot control or discover" is a thesis: a single counter-fact (the applicant could in fact discover it) would kill it.
+Write it as a position someone holds, not as a research finding reported from a distance. The article that follows will marshal authority in support of this view, concede what genuinely cuts against it, and still arrive here. A thesis nobody could disagree with is not a thesis; neither is one the author would not defend in a room full of specialists.
+
+It must also be falsifiable — not as an academic formality, but because a view you cannot say the conditions for abandoning is a preference rather than a position.
+
+A thesis is falsifiable: a specific reader could point to a specific fact and say "no, because X." The examples below are drawn from unrelated fields purely to show the FORM — say something equally specific about the topic actually in front of you.
+
+  Not a thesis: "The environmental clearance regime is necessary but may require refinement." It is compatible with every possible finding, so nothing could ever falsify it.
+  A thesis: "Post-facto environmental clearance defeats the statutory scheme, because the assessment it authorises can only be performed before the harm it exists to prevent." One counter-fact — a case where post-facto assessment did prevent harm — would damage it.
+
+  Not a thesis: "The anti-profiteering provisions raise questions of fairness."
+  A thesis: "The anti-profiteering provisions are unworkable as drafted, because they impose a duty to pass on a benefit without prescribing any method for computing it, leaving the same conduct lawful before one authority and unlawful before another."
+
+Notice what both real theses share: a mechanism, not a mood. Each says WHY, in terms specific enough that a reader who knows the field could disagree on the facts.
 
 Two rules:
 1. thesis: one or two sentences. State the specific conclusion, not the area of law and not a call for "balance" or "refinement." If your thesis could be published about a different statute by swapping the noun, it is not specific enough.
@@ -232,7 +251,7 @@ Rules:
 3. Prefer one section per major legal issue unless issues are closely related enough to combine; do not create more than 8 sections for a short article or fewer than 3 for a long one.
 4. issue_refs entries must be copied verbatim from the numbered list — do not paraphrase them.
 5. Every section carries a `role` (one of: intro, concede, convict, refuse, counterfactual, case_against, conclusion), matching the structural roles defined below. The first section is always role=intro and the last is always role=conclusion. Most sections carrying legal issues are role=convict.
-6. Every section carries a `conclusion`: one or two sentences stating the specific, falsifiable claim that section must land — not its topic. "Examines the classification under Section 29A" is a topic; "The classification is arbitrary because it turns on a fact the applicant cannot control" is a conclusion.
+6. Every section carries a `conclusion`: one or two sentences stating the specific, falsifiable claim that section must land — not its topic. The distinction, illustrated on an unrelated subject so you copy the form and not the field: "Examines the retrospective operation of the amendment" is a topic; "The amendment operates retrospectively in substance, because it attaches a new disability to a transaction already completed when it came into force" is a conclusion. A section whose `conclusion` could be written before reading the evidence is a topic wearing a conclusion's clothes.
 7. Every section carries `depends_on`: the exact titles (copied verbatim, as you write them) of earlier sections this one builds on and must not re-explain from scratch. Leave empty if the section is self-contained. A section may only depend on sections that come before it.
 
 THE OPENING
@@ -256,7 +275,13 @@ The structure must be argumentative, not merely descriptive. A sequence of secti
 
   REFUSE — a late Part showing that the argument commonly made in FAVOUR of the article's own conclusion is fallacious, incomplete, or aimed at the wrong target. This is the Part that distinguishes scholarship from advocacy, and it requires the prevailing view to be present in the evidence in its holders' own words.
 
-    REFUSE is not a second CASE_AGAINST. CASE_AGAINST attacks the article's thesis; REFUSE attacks a popular argument that supports the article's own thesis but supports it badly. Get the direction right: if the article's conclusion is "Section 29A's breadth is unjustified," a REFUSE section does NOT restate criticisms of Section 29A's breadth — that is CASE_AGAINST territory, or just more CONVICT. REFUSE instead takes a commonly-heard argument for narrowing/striking 29A and shows it's the wrong reason to reach that conclusion (e.g. "critics say 29A is unconstitutional; it isn't, and resting the case on that claim is a mistake that lets the real objection go unmade"). A REFUSE section titled "The Case Against X" or "Criticisms of X" is almost always this error — wrong direction, restating the article's own side instead of correcting a bad argument for it.
+    REFUSE is not a second CASE_AGAINST, and the two are constantly confused. CASE_AGAINST attacks the article's thesis. REFUSE attacks a popular argument that SUPPORTS the article's thesis but supports it badly — it is friendly fire, aimed at your own side's weakest reasoning.
+
+    Worked through on an unrelated subject, so you take the direction and not the field. Suppose the article concludes that a particular tribunal's jurisdiction has been read too widely.
+      Wrong (this is CASE_AGAINST, or simply more CONVICT): a section restating the criticisms of the wide reading. That is the article's own side again.
+      Right (this is REFUSE): "The most common argument against the wide reading is that it ousts the civil court's jurisdiction. That argument is weak — the statute expressly saves civil remedies, so the ouster claim is answerable on the text and its repeated use has let the stronger objection go unmade. The real difficulty is not ouster but remedial capacity: the tribunal cannot grant the relief these disputes require."
+
+    Two tests before you commit to a REFUSE section. First: does it criticise an argument, rather than a rule or an institution? If it criticises the rule, it belongs in CONVICT. Second: would someone who AGREES with this article's conclusion be uncomfortable reading it? If not, it is not doing REFUSE's work. A section titled "The Case Against X" or "Criticisms of X" is almost always this error.
 
 Two further sections earn their place in any article long enough to hold them:
 
@@ -382,11 +407,28 @@ To cite an item, write your point and end it with the marker [[ev:<evidence_id>]
 
 Rules:
 1. If you quote an evidence item's exact words, wrap them in double quotes and place the marker immediately after the closing quote: "exact words" [[ev:abc123]]. Only do this if the evidence item has a verbatim_quote — do not put quote marks around a paraphrase.
-2. Every substantive legal claim must carry at least one marker. A sentence with no marker should be transition/framing text only, not a legal proposition.
+2. Everything you assert must come from the evidence below — that rule is absolute. But CITE BY PASSAGE, NOT BY SENTENCE. A run of two to five sentences that develops one point from the same evidence takes ONE marker, placed at the end of the run. Published legal scholarship cites roughly once per 200 words of argument; a marker after every sentence chops the prose into fragments and is the clearest sign a machine wrote it. Never re-cite the same evidence item twice in one paragraph — once the reader has the source, developing the point further needs no fresh marker. If a passage genuinely draws on two different items, cite both at the point where the second one enters, not throughout.
 3. Never invent an evidence_id. Only use IDs from the list below.
 4. Do not cite evidence outside the list below, even if it seems relevant — it was not selected for this section.
 4a. One marker per citation, always. To cite two items for the same point, write two complete markers back to back — [[ev:abc123]] [[ev:def456]] — never combine IDs inside a single bracket like [[ev:abc123], [ev:def456]] or [[ev:abc123, ev:def456]]. A malformed marker cannot be resolved to a citation.
 5. Write plain prose (markdown), no headers (the section title is added separately), target roughly {target_words} words.
+
+SHOW THE REASONING, DO NOT JUST ASSERT IT
+
+This is the difference between prose that sounds like a person thinking and prose that sounds assembled. A claim followed by a citation proves only that someone said it. A claim followed by the REASON it holds is an argument.
+
+When you state a conclusion, show the step that gets you there. The reliable move is to name the evidence for the inference, not merely the authority for the proposition:
+
+  Assertion (what to avoid): "The Court's approach here is arbitrary."
+  Reasoning shown: "That the figure is arbitrary is visible in what the judgment does not do: it neither refers to the wage rates fixed for comparable work in the same state, nor explains why a different basis was chosen."
+
+Notice the shape — the claim, then "visible in", "seen from the fact that", "which only makes sense if", followed by the specific thing in the record that supports it. The reader is shown the inference and can disagree with it. That is what makes writing feel authored.
+
+Two habits that carry most of the weight:
+  Reason from absence as well as presence. What a court declines to say, or never cites, is often the strongest evidence about what it is actually doing.
+  Answer the obvious objection where it arises, in the same paragraph, rather than deferring it. "This does not mean X; it means the narrower Y" is worth more than a later section defending the same ground.
+
+Never assert a scale claim — "never once", "in every case", "uniformly" — without showing the survey behind it. If you cannot show it, narrow the claim to what the record actually supports.
 
 WHAT IS AND IS NOT A CLAIM
 
@@ -443,11 +485,27 @@ Calibrated hedging. Write "a compelling argument can be made", "on balance", "th
 
 REGISTER, IRONY AND ANALOGY
 
-Default to flat prose. Subject, verb, object. Short Anglo-Saxon words where they exist. The evidence does the work; the prose is a clean pane of glass in front of it. Long sentence carrying the substance, short sentence landing it. Third person throughout; "this paper argues" and "this Part explains" are permitted, "we" and "our" are not.
+Default to flat prose. Short Anglo-Saxon words where they exist. Plain does not mean absent: the evidence supplies the proof, but you supply the argument it is proof of, and the reader should never be in doubt about which side of the question you are on. Third person throughout; "this paper argues", "this Part explains" and "the better view is" are permitted, "we" and "our" are not — the voice is impersonal in grammar, not in conviction.
+
+Flat does not mean clipped. Legal scholarship carries its qualifications inside the sentence — a claim, the condition it holds under, and the authority it rests on, often in one structure of thirty or forty words. That is the register you are writing in. A long sentence that tracks a real chain of reasoning is right; a long sentence padded with restatement is not. Land the point in a short sentence when the weight has already been carried. What reads as machine-made is every sentence coming out the same length, whether that length is short or long.
 
 Irony is dry, not loud. It is produced by understatement, by juxtaposition, by describing a thing precisely enough that its absurdity becomes visible without comment — never by sneering. "Tellingly, the exemption applied to nobody" is wit. "Astonishingly, the regulator seems to have forgotten how arithmetic works" is snark, and snark forfeits the authority the concession stack has just bought. Use at most one openly ironic construction per section, and never in the same paragraph as a quotation.
 
-Let the evidence convict. Where a verbatim_quote is damaging, quote it, place the marker, and stop. Do not add "remarkably", "shockingly", "astonishingly", or any adjective characterising the quotation. The reader supplies the judgment, which is why the reader accepts it. An editorialising adverb next to a damning quote weakens both.
+JUDGE, AND SHOW WHAT ENTITLES YOU TO
+
+You are not surveying this area. You hold a view and you are advancing it, and the reader should be able to tell what you think from any page. An article that only reports what courts have said, without ever saying whether they were right, reads as compiled rather than written.
+
+So evaluate — but every evaluation must arrive welded to the specific thing that licenses it. The pattern is judgment, then the ground, in the same sentence:
+
+  "Yet it is disappointing that the courts nowhere explain the basis on which they arrive at these figures."
+  "That the amount is arbitrary is seen from the fact that the court refers neither to the minimum wage fixed for comparable work nor to any other published measure."
+  "The exemption is welcome because it makes visible a category of work the statute had until then left uncounted."
+
+Each names a defect or a merit, and each is immediately answerable — a reader who disagrees knows exactly which fact to attack. That is what makes a view worth reading rather than an opinion worth ignoring.
+
+What remains forbidden is evaluation with nothing under it. "Astonishingly, the regulator seems to have forgotten how arithmetic works" is decoration: it adds heat to a quotation without adding a reason, and it forfeits the authority the concessions have bought. The test is simple — delete the adjective. If the sentence still makes the same point, the adjective was doing no work and should go. If the sentence collapses, the judgment was load-bearing and belongs.
+
+Ground every judgment in one of four things, and never in your own impression: a figure or statistic in the record; what a court actually held; what a judge said in obiter, which is where judicial opinion lives and is the natural anchor for your own; or the stated position of someone with standing in the field — a regulator, a law commission, a committee, a leading practitioner. An opinion in this article is never unfounded; it is a conclusion drawn from something a reader can go and check.
 
 Analogies must be checkable and disposable. Draw them from ordinary life or from a different area of law, make them do one piece of work, and abandon them. Do not extend a metaphor across paragraphs, do not build a section around one, and never let an analogy carry a legal proposition — it may illuminate a proposition the evidence has already established, never replace it.
 
@@ -456,7 +514,7 @@ Diction budget. Allow yourself roughly one vivid or striking phrase per 400 word
 FORBIDDEN
 
 - Exclamation marks; rhetorical questions used as filler rather than as an argumentative hinge; second person; "Let's"; "In today's fast-paced world"; "It is important to note that"; "In conclusion"
-- Editorialising adjectives or adverbs adjacent to a quotation
+- Evaluative words with no ground under them — an adjective that survives deletion without changing the point ("astonishingly", "shockingly", "remarkably"). Judgment is required; unearned emphasis is not.
 - Jokes that carry a legal proposition, puns on party names, mockery of any identifiable person
 - Any case name, provision, date, quotation or figure not present in the evidence list below
 - Stating a legal rule on the authority of a press item, or letting "reportedly" do load-bearing work in a doctrinal claim
@@ -733,7 +791,10 @@ async def draft_node(
 # ---------------------------------------------------------------------
 
 def _render_section_body(
-    body: str, evidence_by_id: dict[str, Evidence], calc_by_id: dict[str, CalcClaim]
+    body: str,
+    evidence_by_id: dict[str, Evidence],
+    calc_by_id: dict[str, CalcClaim],
+    sources_by_id: dict[str, Source] | None = None,
 ) -> str:
     """Resolve every [[ev:<id>]] and [[calc:<id>]] marker in one
     section's raw drafted body into its final reader-facing text.
@@ -746,7 +807,8 @@ def _render_section_body(
         ev = evidence_by_id.get(ev_id)
         if ev is None:
             return " [citation unresolved]"
-        cite = render_citation(ev.citation) or "[citation unresolved]"
+        source = (sources_by_id or {}).get(ev.source_id)
+        cite = render_evidence_citation(ev.citation, source) or "[citation unresolved]"
         pin = f", {ev.pinpoint}" if ev.pinpoint else ""
         return f" ({cite}{pin})"
 
@@ -772,6 +834,7 @@ def assemble_article(
     sections: list[DraftedSection],
     evidence_by_id: dict[str, Evidence],
     voiced_bodies: dict[str, str] | None = None,
+    sources_by_id: dict[str, Source] | None = None,
 ) -> str:
     """STEP 8. `voiced_bodies` (section_id -> already fully-resolved,
     voice-pass-adjusted text), when given, is used verbatim instead of
@@ -784,7 +847,7 @@ def assemble_article(
             body = voiced_bodies[s.section_id]
         else:
             calc_by_id = {c.calc_id: c for c in s.calcs}
-            body = _render_section_body(s.body, evidence_by_id, calc_by_id)
+            body = _render_section_body(s.body, evidence_by_id, calc_by_id, sources_by_id)
         parts.append(body + "\n")
     return "\n".join(parts)
 
@@ -798,12 +861,14 @@ def verify_draft(
     sections: list[DraftedSection],
     evidence_by_id: dict[str, Evidence],
     legal_issues: list[str],
+    sources_by_id: dict[str, Source] | None = None,
 ) -> DraftVerificationReport:
     marker_issues: list[MarkerIssue] = []
     quote_issues: list[QuoteIssue] = []
     calc_issues: list[CalcIssue] = []
     all_marker_ids: list[str] = []
     covered_issues: set[str] = set()
+    unresolved_citations = 0
 
     section_by_id = {s.section_id: s for s in outline.sections}
 
@@ -842,6 +907,16 @@ def verify_draft(
                 if r.isdigit() and 0 < int(r) <= len(legal_issues)
             }
             covered_issues |= section_issues & ev_issue_texts
+
+            # A marker can be perfectly valid and still give the reader
+            # nothing: if the evidence carries no renderable citation it
+            # prints as "[citation unresolved]". That was invisible here
+            # — an article where every citation was unresolved passed
+            # verification clean.
+            _ev = evidence_by_id[ev_id]
+            _src = (sources_by_id or {}).get(_ev.source_id)
+            if not render_evidence_citation(_ev.citation, _src):
+                unresolved_citations += 1
 
         # Any "ev:<id>" token in the body that ISN'T one of the
         # well-formed [[ev:<id>]] markers just processed above is a
@@ -943,6 +1018,8 @@ def verify_draft(
 
     unique_evidence_cited = len({m for m in all_marker_ids if m in evidence_by_id})
 
+    unresolved_ratio = unresolved_citations / len(all_marker_ids) if all_marker_ids else 0.0
+
     if marker_issues or quote_issues or calc_issues:
         verdict: str = "failed"
         rationale = (
@@ -953,6 +1030,13 @@ def verify_draft(
     elif uncovered_issues:
         verdict = "failed"
         rationale = f"{len(uncovered_issues)} legal issue(s) have zero cited evidence anywhere in the draft."
+    elif unresolved_ratio > UNRESOLVED_CITATION_FAIL_RATIO:
+        verdict = "failed"
+        rationale = (
+            f"{unresolved_citations} of {len(all_marker_ids)} citation(s) "
+            f"({unresolved_ratio:.0%}) render as '[citation unresolved]' — the markers are "
+            "valid but the reader cannot tell what most statements rest on."
+        )
     else:
         verdict = "passed"
         rationale = (
@@ -969,6 +1053,8 @@ def verify_draft(
         uncovered_issues=uncovered_issues,
         citation_count=len(all_marker_ids),
         unique_evidence_cited=unique_evidence_cited,
+        unresolved_citation_count=unresolved_citations,
+        unresolved_citation_ratio=unresolved_ratio,
         verdict=verdict,  # type: ignore[arg-type]
         rationale=rationale,
     )
@@ -987,8 +1073,31 @@ def verify_draft(
 # original resolved text is kept. This pass is opportunistic, never
 # load-bearing — a rejected rewrite is not a failure, just a no-op.
 
-_PAREN_SPAN_RE = re.compile(r"\([^()]*\)")
 _QUOTE_SPAN_RE = re.compile(r"[“\"]([^”\"]{3,})[”\"]")
+
+
+def _top_level_paren_spans(text: str) -> list[str]:
+    """Every top-level parenthesised span, nesting included.
+
+    A regex cannot do this: `\\([^()]*\\)` matches the INNERMOST parens,
+    so "(IBC, 2016, s. 29A(c))" yields only "(c)" and the citation
+    around it is invisible to the safety check. Citations routinely
+    nest — "(Civil)", "(AT) (Ins)", "s. 29A(3)(c)" — so the check has
+    to track depth rather than pattern-match.
+    """
+    spans: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch == "(":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == ")" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                spans.append(text[start : i + 1])
+    return spans
 
 
 class LLMVoicePass(BaseModel):
@@ -1000,7 +1109,7 @@ class LLMVoicePass(BaseModel):
 _VOICE_SYSTEM = """You are a copy-editor with an extremely limited mandate: improve the sentence-level rhythm of one already-complete, fully-cited section of a scholarly legal article. The facts, citations, quotations, and argument are already correct and final. You may not change any of them — only how the existing sentences are built.
 
 Do exactly these three things, nothing else:
-1. Vary sentence length. A section where every sentence runs 20-35 words reads as mechanical. Break some up. Land a point in three or four words if that is the strongest way to state it. Some sentences should be long and carry substance; the next should be short and land it.
+1. Vary sentence length — but vary it around the register of published legal scholarship, which runs LONGER than most prose. In the journals this writing is measured against, sentences average roughly 27-34 words, with wide variation around that: a 60-word sentence carrying a full chain of qualification, then an 8-word sentence landing it. What reads as machine-made is uniformity, not length. Do not chop the prose into short declaratives — a section of clipped 12-word sentences reads like a blog post, not like scholarship, and is its own kind of monotony. If the section is already varied, leave its rhythm alone.
 2. Cut the participial tail. "...thereby ensuring the integrity of the process." / "...underscoring its importance." / "...highlighting the need for reform." / "...emphasizing its role in..." / "...reflecting legislative intent." — this dangling "-ing" clause bolted onto an already-finished sentence is the single most mechanical tic in this prose. Find every one. Either cut it (if it adds nothing) or split it into its own short, direct sentence.
 3. Don't repeat the same transition word to open more than one sentence in the section (e.g. "However," starting two sentences). Vary it, or delete the transition if the sentences already flow without it.
 
@@ -1018,7 +1127,7 @@ _VOICE_USER_TEMPLATE = """Section text (already fully cited — rewrite only for
 
 
 def _voice_pass_is_safe(original: str, rewritten: str) -> bool:
-    if Counter(_PAREN_SPAN_RE.findall(original)) != Counter(_PAREN_SPAN_RE.findall(rewritten)):
+    if Counter(_top_level_paren_spans(original)) != Counter(_top_level_paren_spans(rewritten)):
         return False
     return Counter(_QUOTE_SPAN_RE.findall(original)) == Counter(_QUOTE_SPAN_RE.findall(rewritten))
 
@@ -1048,7 +1157,9 @@ async def _voice_pass_section(rendered_body: str, section_id: str) -> str:
 
 
 async def voice_node(
-    sections: list[DraftedSection], evidence_by_id: dict[str, Evidence]
+    sections: list[DraftedSection],
+    evidence_by_id: dict[str, Evidence],
+    sources_by_id: dict[str, Source] | None = None,
 ) -> dict[str, Any]:
     """STEP 10: final per-section rhythm pass. Returns section_id ->
     final text, ready to hand to assemble_article's voiced_bodies."""
@@ -1057,7 +1168,7 @@ async def voice_node(
     voiced_bodies: dict[str, str] = {}
     for s in sections:
         calc_by_id = {c.calc_id: c for c in s.calcs}
-        resolved = _render_section_body(s.body, evidence_by_id, calc_by_id)
+        resolved = _render_section_body(s.body, evidence_by_id, calc_by_id, sources_by_id)
         voiced_bodies[s.section_id] = await _voice_pass_section(resolved, s.section_id)
 
     log.info("voice_node_done", section_count=len(voiced_bodies))
@@ -1081,18 +1192,28 @@ async def generation_node(package: EvidencePackage, article_config: ArticleConfi
     sections: list[DraftedSection] = draft_result["drafted_sections"]
 
     evidence_by_id = {e.evidence_id: e for e in package.evidence}
+    # Needed by every render path below: evidence that carries no
+    # citation of its own is attributed from its Source instead.
+    sources_by_id = {s.source_id: s for s in package.sources}
 
     # Verify BEFORE the voice pass — verify_draft checks the raw
     # [[ev:]]/[[calc:]] markers in each section's drafted body, which
     # the voice pass never touches (it only rewrites already-resolved
     # text). Running verification first also means a failed draft still
     # gets a rendered article for inspection, same as before Step 10 existed.
-    report = verify_draft(outline, sections, evidence_by_id, package.legal_issues)
+    report = verify_draft(
+        outline, sections, evidence_by_id, package.legal_issues, sources_by_id
+    )
 
-    voice_result = await voice_node(sections, evidence_by_id)
+    # voice_node resolves markers itself and its output is what
+    # assemble_article ships, so sources_by_id MUST reach it too —
+    # passing it only to assemble_article would be a silent no-op.
+    voice_result = await voice_node(sections, evidence_by_id, sources_by_id)
     voiced_bodies: dict[str, str] = voice_result["voiced_bodies"]
 
-    rendered = assemble_article(outline, sections, evidence_by_id, voiced_bodies)
+    rendered = assemble_article(
+        outline, sections, evidence_by_id, voiced_bodies, sources_by_id
+    )
 
     draft = ArticleDraft(
         run_id=package.run_id,
@@ -1109,6 +1230,8 @@ async def generation_node(package: EvidencePackage, article_config: ArticleConfi
         quote_issue_count=len(report.quote_issues),
         calc_issue_count=len(report.calc_issues),
         uncovered_issue_count=len(report.uncovered_issues),
+        unresolved_citations=report.unresolved_citation_count,
+        unresolved_citation_ratio=round(report.unresolved_citation_ratio, 3),
     )
 
     return {
