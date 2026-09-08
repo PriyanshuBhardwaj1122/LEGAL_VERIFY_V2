@@ -19,6 +19,7 @@ import unicodedata
 from datetime import datetime, timezone
 from typing import Literal
 
+from pydantic import ValidationError
 from rapidfuzz import fuzz
 
 from app.core.logging import ctx_node, get_logger
@@ -247,6 +248,7 @@ async def grounding_node(
     errors: list[NodeError] = []
     grounding_counts = {"exact": 0, "normalized": 0, "fuzzy": 0, "ungrounded": 0}
     invariant_drops = 0
+    schema_drops = 0
 
     for cand in candidates:
         source = sources_by_id.get(cand.source_id)
@@ -328,32 +330,52 @@ async def grounding_node(
             f"{cand.source_id}:{cand.statement}:{start}:{end}".encode()
         ).hexdigest()[:16]
 
-        evidence.append(
-            Evidence(
-                evidence_id=evidence_id,
-                run_id=run_id,
-                source_id=cand.source_id,
-                loop_index=loop_index,
-                kind=cand.kind,  # type: ignore[arg-type]
-                statement=cand.statement,
-                verbatim_quote=resolved_quote,
-                quote_start=start,
-                quote_end=end,
-                grounding=grounding_level,
-                pinpoint=cand.pinpoint,
-                citation=citation,
-                supports_issues=cand.supports_issues,
-                jurisdiction=source.jurisdiction,
-                court_level=source.court_level,
-                as_of=source.decided_or_published_on,
-                binding_strength=binding_strength,
-                llm_confidence=cand.llm_confidence,
-                authority_tier=source.score.tier,
+        try:
+            evidence.append(
+                Evidence(
+                    evidence_id=evidence_id,
+                    run_id=run_id,
+                    source_id=cand.source_id,
+                    loop_index=loop_index,
+                    kind=cand.kind,  # type: ignore[arg-type]
+                    statement=cand.statement,
+                    verbatim_quote=resolved_quote,
+                    quote_start=start,
+                    quote_end=end,
+                    grounding=grounding_level,
+                    pinpoint=cand.pinpoint,
+                    citation=citation,
+                    supports_issues=cand.supports_issues,
+                    jurisdiction=source.jurisdiction,
+                    court_level=source.court_level,
+                    as_of=source.decided_or_published_on,
+                    binding_strength=binding_strength,
+                    llm_confidence=cand.llm_confidence,
+                    authority_tier=source.score.tier,
+                )
             )
-        )
+        except ValidationError as e:
+            # One malformed candidate must not destroy a whole loop.
+            # Everything upstream — search, fetch, extraction — has
+            # already been paid for by this point, so raising here throws
+            # away every other candidate in the batch too.
+            schema_drops += 1
+            # Report which FIELD failed and why. str(e)'s last line is
+            # pydantic's docs URL, which says nothing about the problem.
+            details = "; ".join(
+                f"{'.'.join(str(p) for p in err['loc'])}: {err['type']}" for err in e.errors()
+            )
+            log.warning(
+                "grounding_schema_drop",
+                source_id=cand.source_id,
+                kind=cand.kind,
+                quote_chars=len(resolved_quote) if resolved_quote else 0,
+                error=details[:200],
+            )
+            continue
 
     total = len(candidates)
-    grounded = total - grounding_counts.get("ungrounded", 0) - invariant_drops
+    grounded = total - grounding_counts.get("ungrounded", 0) - invariant_drops - schema_drops
     pass_rate = round(grounded / total, 3) if total else 0.0
 
     log.info(
@@ -362,6 +384,7 @@ async def grounding_node(
         evidence_count=len(evidence),
         grounding_counts=grounding_counts,
         invariant_drops=invariant_drops,
+        schema_drops=schema_drops,
         pass_rate=pass_rate,
     )
 

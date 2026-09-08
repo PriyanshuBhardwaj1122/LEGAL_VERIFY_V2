@@ -25,15 +25,27 @@ class Settings(BaseSettings):
     )
 
     # LLM — provider selection
-    llm_provider: str = "openai"  # "openai" or "anthropic"
+    llm_provider: str = "openai"  # "openai" or "anthropic" — used by the research phase
+    # Generation phase (thesis/outline/draft/voice) provider override.
+    # Empty string falls back to llm_provider — set this independently
+    # to run research on one provider and generation (the reader-facing
+    # prose) on another, e.g. GENERATION_LLM_PROVIDER=anthropic while
+    # LLM_PROVIDER stays "openai".
+    generation_llm_provider: str = ""
 
+    # One model per provider — used for every call made through that
+    # provider's client, in whichever phase (research or generation)
+    # selected it. There is no per-node (planner/extractor/draft/voice)
+    # model override anywhere in the codebase today.
     anthropic_api_key: str = ""
-    claude_planner_model: str = "claude-sonnet-4-20250514"
-    claude_extractor_model: str = "claude-sonnet-4-20250514"
+    # Required only for identity-linked API keys, which the API rejects
+    # without an `anthropic-workspace-id` header. Leave empty for a
+    # normal workspace-scoped key.
+    anthropic_workspace_id: str = ""
+    claude_model: str = "claude-sonnet-5"
 
     openai_api_key: str = ""
-    openai_planner_model: str = "gpt-4o"
-    openai_extractor_model: str = "gpt-4o"
+    openai_model: str = "gpt-4o"
 
     # Search providers
     tavily_api_key: str = ""
@@ -42,6 +54,13 @@ class Settings(BaseSettings):
     semantic_scholar_api_key: str = ""
     indiankanoon_api_token: str = ""
     serpapi_api_key: str = ""
+
+    # Outbound HTTP politeness, applied per host by app/core/rate_limit.py
+    # to fetches AND to the evaluator's retrievability probes. Hitting one
+    # site many-wide with no spacing is what produced the 429s that were
+    # dropping court judgments from runs.
+    per_host_fetch_concurrency: int = 2
+    per_host_fetch_rate_per_sec: float = 2.0
 
     # Provider concurrency
     tavily_concurrency: int = 8

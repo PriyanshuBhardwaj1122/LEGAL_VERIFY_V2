@@ -48,7 +48,13 @@ def _instrument_has_statutory_evidence(
         if source.source_type not in (SourceType.STATUTE, SourceType.SUBORDINATE_LEGISLATION):
             continue
         title = (source.title or "").lower()
-        if instrument_lower[:30] in title or e.kind == "statutory_text":
+        # Both conditions, not either: the evidence must actually BE
+        # statutory text, and must come from a source about THIS
+        # instrument. With `or`, a statute-typed source whose title
+        # merely mentioned the instrument satisfied the quota using
+        # commentary evidence — the quota is meant to prove we have the
+        # provision's own words, so it has to check for them.
+        if instrument_lower[:30] in title and e.kind == "statutory_text":
             return True
     return False
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from decimal import Decimal
 from collections import Counter
 from datetime import datetime
 
@@ -36,6 +37,7 @@ from sqlalchemy import select
 from app.core.logging import get_logger
 from app.db.models import ResearchPlanRow, ResearchRun, SourceRow
 from app.db.repo.research import EvidenceRepo, SourceDocumentRepo
+from app.core.budget import BudgetGuard
 from app.db.session import get_db_session
 from app.graph.nodes.extractor import extractor_node
 from app.graph.nodes.fetch_dispatch import fetch_dispatch_node
@@ -148,11 +150,18 @@ async def main():
             legal_issues = plan_row.payload["legal_issues"]
         else:
             legal_issues = [run_row.topic if run_row else "the researched legal issue"]
+        # Budget guard persists per-call token usage to research.api_call_log
+        # so extraction cost is measurable rather than estimated.
+        budget = BudgetGuard(
+            run_id, Decimal("500.00"), db_session_factory=get_db_session
+        )
         extract_result = await extractor_node(
             sources=updated_sources,
             documents_by_source_id=documents_by_source_id,
             legal_issues=legal_issues,
+            budget=budget,
         )
+        print(f"  -> extraction spend: INR {budget.spent:.2f}")
         candidates = extract_result["evidence_candidates"]
         print(f"candidates={len(candidates)}\n")
 

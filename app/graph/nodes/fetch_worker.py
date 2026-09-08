@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.logging import ctx_node, get_logger
-from app.providers.extract.fetcher import fetch_and_extract
+from app.providers.extract.fetcher import FetchFailure, fetch_and_extract
 from app.providers.extract.normalize import content_hash, normalize_text
 from app.schemas.evidence import NodeError
 from app.schemas.source import Source, SourceDocument
@@ -43,7 +43,7 @@ async def fetch_worker_node(payload: dict[str, Any]) -> dict[str, Any]:
 
     result = await fetch_and_extract(url)
 
-    if result is None:
+    if isinstance(result, FetchFailure):
         source.status = "failed"
         return {
             "source": source,
@@ -52,9 +52,13 @@ async def fetch_worker_node(payload: dict[str, Any]) -> dict[str, Any]:
                 NodeError(
                     node="fetch_worker",
                     kind="fetch_failed",
-                    detail=f"Could not fetch or extract text from {url}",
+                    detail=f"Could not fetch {url}: {result.reason} ({result.detail})",
                     source_id=source.source_id,
-                    retryable=False,
+                    # Carry the real classification through: a throttled
+                    # site is worth another attempt on a later loop, a
+                    # dead one is not. This was hardcoded False, so the
+                    # repair loop treated both the same.
+                    retryable=result.retryable,
                     occurred_at=datetime.now(timezone.utc),
                 )
             ],

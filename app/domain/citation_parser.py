@@ -52,7 +52,7 @@ _PATTERNS: list[tuple[str, re.Pattern, str]] = [
         "case_number",
         re.compile(
             r"(?P<type>Civil|Criminal|Special\s+Leave|Writ)\s+"
-            r"(?:Appeal|Petition|Application)\s+No\.?\s*(?P<num>\d+)\s+of\s+(?P<year>\d{4})"
+            r"(?P<noun>Appeal|Petition|Application)\s+No\.?\s*(?P<num>\d+)\s+of\s+(?P<year>\d{4})"
         ),
         "case",
     ),
@@ -137,7 +137,10 @@ def _build_case_citation(raw: str, pattern_name: str, g: dict) -> LegalCitation:
         cit.scc_online = f"{year} SCC OnLine {court} {g['num']}"
         cit.court = _expand_hc_code(court) if court else None
     elif pattern_name == "case_number":
-        cit.case_number = f"{g['type']} Appeal No. {g['num']} of {year}"
+        # Use the captured noun — hardcoding "Appeal" rendered a
+        # Special Leave Petition as a "Special Leave Appeal", i.e. a
+        # citation that is confidently wrong. Worse than unresolved.
+        cit.case_number = f"{g['type']} {g.get('noun') or 'Appeal'} No. {g['num']} of {year}"
     elif pattern_name == "writ_petition":
         cit.case_number = f"W.P.({g['type']}) No. {g['num']} of {year}"
 
@@ -147,10 +150,14 @@ def _build_case_citation(raw: str, pattern_name: str, g: dict) -> LegalCitation:
 def _build_statute_citation(raw: str, g: dict) -> LegalCitation:
     act_raw = g.get("act", "").strip().rstrip(",. ")
     year = None
-    # Extract year from act name
+    # Extract the year from the act name AND remove it, so act_name is
+    # the bare title. render_citation re-appends act_year itself, so
+    # leaving it here produced "Insolvency and Bankruptcy Code, 2016,
+    # 2016, s. 29A" — which shipped in a real article.
     year_match = re.search(r"(\d{4})\s*$", act_raw)
     if year_match:
         year = int(year_match.group(1))
+        act_raw = act_raw[: year_match.start()].strip().rstrip(",. ")
 
     return LegalCitation(
         raw=raw,

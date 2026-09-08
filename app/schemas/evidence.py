@@ -27,8 +27,11 @@ class Evidence(BaseModel):
         "policy_rationale",
         "commentary_opinion",
     ]
-    statement: str = Field(max_length=400)
-    verbatim_quote: str | None = Field(default=None, max_length=1200)
+    statement: str = Field(max_length=500)
+    # Statutory provisions are quoted whole and a single sub-section can
+    # run well past a judgment's typical pin-cited sentence, so this is
+    # sized for legislation rather than for case law.
+    verbatim_quote: str | None = Field(default=None, max_length=4000)
     quote_start: int | None = None
     quote_end: int | None = None
     grounding: Literal["exact", "normalized", "fuzzy", "ungrounded"] = "ungrounded"
@@ -49,7 +52,7 @@ class EvidenceCandidate(BaseModel):
 
     source_id: str
     kind: str
-    statement: str = Field(max_length=400)
+    statement: str = Field(max_length=500)
     verbatim_quote: str | None = None
     pinpoint: str | None = None
     citation_raw: str | None = None

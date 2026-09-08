@@ -74,7 +74,7 @@ class OpenAILLM:
     def __init__(self):
         settings = get_settings()
         self.client = AsyncOpenAI(api_key=settings.openai_api_key)
-        self.default_model = settings.openai_planner_model
+        self.default_model = settings.openai_model
 
     async def generate(
         self,
